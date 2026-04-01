@@ -8,30 +8,36 @@ import uuid # 这是一个内置库，不用额外安装，用来生成随机纯
 import urllib.parse
 import datetime
 import hashlib
+from dotenv import load_dotenv
+
+
 
 # ====================================================
-# 🔴 【配置区：填入你的钥匙和 obsidian vault 名称】 🔴
+# 🔴 【读取 keys and paths】 🔴
 # ====================================================
 #region
-GEMINI_API_KEY = ""
-NOTION_TOKEN = ""
-DATABASE_ID = ""
-EASYSCHOLAR_KEY = ""
+load_dotenv()
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+NOTION_TOKEN = os.getenv("NOTION_TOKEN")
+DATABASE_ID = os.getenv("DATABASE_ID")
+EASYSCHOLAR_KEY = os.getenv("EASYSCHOLAR_KEY")
 
 # 文件夹路径配置 (默认在当前目录，无需修改)
-INPUT_FOLDER = "./PDF_Input"
-PROCESSED_FOLDER = "./Processed"
-BIBTEX_FOLDER = "./Data-Driven_Lit_Bibtex" # 本地 Bibtex 备份目录
-OBSIDIAN_VAULT = "Data-Driven_Lit_Obsidian"
-OBSIDIAN_FOLDER = f"./{OBSIDIAN_VAULT}" # 本地 Markdown 备份目录
-HASH_DB_FILE = f"{PROCESSED_FOLDER}/processed_hashes.txt" # 文件指纹库路径
+INPUT_FOLDER = os.getenv("INPUT_FOLDER")
+PROCESSED_FOLDER = os.getenv("PROCESSED_FOLDER")
+BIBTEX_FOLDER = os.getenv("BIBTEX_FOLDER") # 本地 Bibtex 备份目录
+OBSIDIAN_VAULT = os.getenv("OBSIDIAN_VAULT") # Obsidian Vault 名称
+OBSIDIAN_FOLDER = os.getenv("OBSIDIAN_FOLDER") # 本地 Markdown 备份目录
+HASH_DB_FILE = os.getenv("HASH_DB_FILE") # 文件指纹库路径
 # ==========================================
 
 # 推荐使用的模型名称（请确保你在 Google AI Studio 中看到的名字与此一致）
-MODEL_NAME = "gemini-3-flash-preview"
+MODEL_NAME = os.getenv("MODEL_NAME")
 
-# 刚才那一长串 Master Prompt
-MASTER_PROMPT = ""
+# 读取 Master Prompt
+PROMPT_EMP = os.getenv("PROMPT_EMP")
+PROMPT_REV = os.getenv("PROMPT_REV")
 #endregion
 
 # ==========================================
@@ -39,6 +45,50 @@ MASTER_PROMPT = ""
 # ==========================================
 # 初始化客户端
 client = genai.Client(api_key=GEMINI_API_KEY)
+
+
+# 提示用户选择文献类型，并获取输入
+def get_user_input():
+    choice = ""
+    literature_type = ""
+    prompt_path = ""
+    while choice == "":
+        print("Hello! I'm Paper Analyzer.\nPlease select the literature type you want analyzed:")
+        print("1. Empirical research papers\n2. Review articles")
+
+        choice = input("Enter the number of your choice: ").strip()
+
+        if choice == "1":
+            literature_type = "Empirical"
+            print(f"I'm going to analyze {literature_type} papers.")
+            print("Do you confirm? y/n")
+            confirm = input("Do you confirm? y/n").strip()
+            if confirm == "y":
+                prompt_path = PROMPT_EMP
+                break
+            else:
+                choice = ""
+                literature_type = ""
+                continue
+        elif choice == "2":
+            literature_type = "Review"
+            print(f"I'm going to analyze {literature_type} papers.")
+            print("Do you confirm? y/n")
+            confirm = input("Do you confirm? y/n").strip()
+            if confirm == "y":
+                prompt_path = PROMPT_REV
+                break
+            else:
+                choice = ""
+                literature_type = ""
+                continue
+        else:
+            print("Invalid choice. Please enter 1 or 2.")
+            choice = ""
+            continue
+    
+    return literature_type, prompt_path
+
 
 # region 哈希值查重、生成记录
 # 计算文件 MD5 哈希值
@@ -86,7 +136,7 @@ def smart_format(text):
         return " ".join(formatted_words)
 
 # region 第1步：上传文件到 AI 并获取 JSON
-def get_paper_analysis(pdf_path):
+def get_paper_analysis(prompt, pdf_path):
     print(f"1️⃣ 正在上传文件并调用大模型分析...")
     uploaded_file = None
     
@@ -104,7 +154,7 @@ def get_paper_analysis(pdf_path):
         # 2. 调用模型生成内容
         response = client.models.generate_content(
             model=MODEL_NAME,
-            contents=[MASTER_PROMPT, uploaded_file]
+            contents=[prompt, uploaded_file]
         )
         
         # 3. 清洗并解析 JSON
@@ -239,7 +289,7 @@ def get_journal_ranks(journal_name):
     return rank_results, indicator_dict
 
 # region 第3步：输出为 .md 文件，保存在 Obsidian
-def save_to_obsidian(data, pdf_local_path, journal_ranks, indicators):
+def save_to_obsidian(data, pdf_local_path, journal_ranks, indicators, literature_type):
     print("3️⃣ 正在保存本地 Markdown...")
     if not os.path.exists(OBSIDIAN_FOLDER):
         os.makedirs(OBSIDIAN_FOLDER)
@@ -419,7 +469,7 @@ def save_bibtex(data, pdf_local_path, bib_file_with_timestamp):
     try:
         if bibtex_code and bibtex_code.strip() != "N/A":
             # 给 bibtex 增加 obsidian url 和 Zotero file link
-            bibtex_code = f"{bibtex_code[:-1]},url={obsidian_link},file={file_link}{bibtex_code[-1:]},shorttitle=" + "{" + f"{title_short_cn}" + "}"
+            bibtex_code = f"{bibtex_code[:-1]},url={obsidian_link},file={file_link},shorttitle=" + "{" + f"{title_short_cn}" + r"}}"
             # 使用 append 模式，追加到大 bibtex 文件末尾
             with open(Master_bibtex, "a", encoding='utf-8') as f:
                 f.write(bibtex_code + "\n\n")
@@ -606,6 +656,13 @@ def move_pdf(pdf_path, pdf_path_processed):
 
 # region 主函数
 def main():
+    
+    literature_type, prompt_path = get_user_input()
+
+    # 读取对应的 prompt
+    with open(prompt_path, 'r', encoding='utf-8') as f:
+        MASTER_PROMPT = f.read()
+
     # 确保路径存在
     if not os.path.exists(INPUT_FOLDER): os.makedirs(INPUT_FOLDER)
     if not os.path.exists(PROCESSED_FOLDER): os.makedirs(PROCESSED_FOLDER)
@@ -651,7 +708,7 @@ def main():
             print("   ✅ 未发现重复，开始分析...")         
 
         # 调用大模型并获取返回的 JSON
-        result_json = get_paper_analysis(pdf_path)
+        result_json = get_paper_analysis(MASTER_PROMPT, pdf_path)
 
         if result_json:
             # 根据获取到的中文短标题，设置输出 PDF 路径
@@ -662,13 +719,13 @@ def main():
             journal_ranks, indicators = get_journal_ranks(journal_name)
 
             # 优先保存一份到本地 Obsidian 文件夹
-            success1 = save_to_obsidian(result_json, pdf_path_processed, journal_ranks, indicators)
+            success1 = save_to_obsidian(result_json, pdf_path_processed, journal_ranks, indicators, literature_type)
             
             # 提取Bibtex并追加到本地引用文件中
             success2 = save_bibtex(result_json, pdf_path_processed, bib_filename_with_timestamp)
 
             # 推送到 Notion
-            success3 = push_to_notion(result_json, pdf_path_processed, journal_ranks, indicators)
+            success3 = push_to_notion(result_json, pdf_path_processed, journal_ranks, indicators, literature_type)
 
             # 如果前面几步都成功完成，移动文件并保存哈希值
             if success1 and success2 and success3:

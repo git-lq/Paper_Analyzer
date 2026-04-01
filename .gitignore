@@ -1,5 +1,11 @@
 .env
 
+Paper_Analyzer.code-workspace
+test.ipynb
+
+.ipynb_checkpoints
+
+.vscode
 
 # 忽略 Python 运行时产生的缓存文件夹（良好习惯）
 __pycache__/
