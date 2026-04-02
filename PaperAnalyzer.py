@@ -63,7 +63,7 @@ def get_user_input():
         if choice == "1":
             literature_type = "Empirical"
             print(f"\nI'm going to analyze {literature_type} papers.")
-            print("⚠️ Please make sure the PDF files in your INPUT FOlDER correspond to this type ⚠️")
+            print("⚠️ Please make sure the PDF files in your INPUT FOLDER correspond to this type ⚠️")
             confirm = input("Do you confirm? Yes(y)/No(n): ").strip()
             if confirm == "y":
                 break
@@ -166,7 +166,7 @@ def get_paper_analysis(prompt, pdf_path, client):
         if raw_text.endswith("```"):
             raw_text = raw_text[:-3]
 
-        print("   ✅ 成功获取返回 JSON !")    
+        print("   ✅ 成功获取返回 JSON 并开始解析!")    
         return json.loads(raw_text.strip())
         
     except Exception as e:
@@ -276,9 +276,12 @@ def get_journal_ranks(journal_name):
                                 rank_results.append(f"{display_name}")
                             else:
                                 rank_results.append(f"{display_name} {custom_rank_value}")
+                print("   ✅ 成功获取期刊等级并记录!")
+                return rank_results, indicator_dict
             else:
                 print("   ⚠️ 期刊不存在或名称错误，请检查后自行查询等级和因子，并填入Obsidian和Notion！")
-                    
+                return ["N/A"], indicator_dict
+                                
     except Exception as e:
         if rank_results:
             print(f"   ⚠️ 仅获取部分期刊等级，错误: {e}")
@@ -287,12 +290,10 @@ def get_journal_ranks(journal_name):
             print(f"   ⚠️ 未能获取期刊等级，错误: {e}，请自行查询等级和因子，并填入Obsidian和Notion！")
             return ["N/A"], indicator_dict
         
-    print("   ✅ 已获取期刊等级!")
-    return rank_results, indicator_dict
 
 # region 第3步：输出为 .md 文件，保存在 Obsidian
 def save_to_obsidian(data, pdf_local_path, journal_ranks, indicators, literature_type):
-    print("3️⃣ 正在保存本地 Markdown...")
+    print("3️⃣ 正在保存本地 .md 文件及 entities 文件到 Obsidian...")
     if not os.path.exists(OBSIDIAN_FOLDER):
         os.makedirs(OBSIDIAN_FOLDER)
     
@@ -414,6 +415,7 @@ Aliases: ["{props.get('Title Short EN', '')}", "{props.get('Title Short CN', '')
 Year: {props.get('Year', 'Unknown')}
 Authors:
 {authors_yaml if authors_yaml else '  - "N/A"'}
+Journal: "[[📓 {props.get('Journal', 'N/A')}]]"
 J_ranks:
 {journal_ranks_yaml}
 J_IF: {indicators['sciif'] if indicators["sciif"] != 0 else 'N/A'}
@@ -446,6 +448,7 @@ Aliases: ["{smart_format(props.get('Title Short EN', ''))}", "{props.get('Title 
 Year: {props.get('Year', 'Unknown')}
 Authors:
 {authors_yaml if authors_yaml else '  - "N/A"'}
+Journal: "[[📓 {props.get('Journal', 'N/A')}]]"
 Journal_ranks:
 {journal_ranks_yaml}
 J_IF: {indicators['sciif'] if indicators["sciif"] != 0 else 'N/A'}
@@ -484,6 +487,7 @@ Local_path: {obsidian_file_link}
     create_entity("🗺️", props.get("Context Tags", []), "Contexts")
     create_entity("🔑", props.get("Keywords", []), "Keywords")
     create_entity("🎖️", journal_ranks, "Journal_ranks")
+    create_entity("📓", props.get("Journal", []), "Journals")
     # 独属实证文章的
     if literature_type == "Empirical":
         create_entity("🧠 Type ", props.get("Logic Type", []), "Logic_types")
@@ -498,7 +502,7 @@ Local_path: {obsidian_file_link}
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(obsidian_note)
         # 返回结果
-        print(f"   ✅ 本地 Markdown 保存成功: {safe_title} - {first_author}.md")
+        print(f"   ✅ 成功保存本地 .md 文件: {safe_title} - {first_author}.md，及相关实体文件！")
         return True
     except Exception as e:
         print(f"   ❌ 本地 Markdown 保存失败: {e}")
@@ -582,6 +586,7 @@ def push_to_notion(data, pdf_local_path, journal_ranks, indicators, literature_t
             "Title Short CN": {"rich_text": [{"text": {"content": str(props.get("Title Short CN", ""))[:2000]}}]},
             "Authors": {"multi_select": [{"name": str(a).replace(',', '').title()} for a in props.get("Authors", [])]},
             "J Ranks": {"rich_text": [{"text": {"content": ranks}}]},
+            "Journal": {"rich_text": [{"text": {"content": str(props.get("Journal", ""))[:2000]}}]},
             "IF": {"number": indicators["sciif"]},
             "IF5": {"number": indicators["sciif5"]},
             "JCI": {"number": indicators["jci"]},
@@ -600,6 +605,7 @@ def push_to_notion(data, pdf_local_path, journal_ranks, indicators, literature_t
             "Title Short CN": {"rich_text": [{"text": {"content": str(props.get("Title Short CN", ""))[:2000]}}]},
             "Authors": {"multi_select": [{"name": str(a).replace(',', '')} for a in props.get("Authors", [])]},
             "J Ranks": {"rich_text": [{"text": {"content": ranks}}]},
+            "Journal": {"rich_text": [{"text": {"content": str(props.get("Journal", ""))[:2000]}}]},
             "IF": {"number": indicators["sciif"]},
             "IF5": {"number": indicators["sciif5"]},
             "JCI": {"number": indicators["jci"]},
