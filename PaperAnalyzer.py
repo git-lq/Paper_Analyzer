@@ -760,6 +760,8 @@ def main():
         # 初始化客户端
         client = genai.Client(api_key=GEMINI_API_KEY_EMP)
         MASTER_PROMPT = PROMPT_EMP
+        # 总的 bibtex 文件名，加上时间戳
+        bib_filename_with_timestamp = rf"{datetime.datetime.now().strftime('%Y%m%d_%H%M')}_Master_Bib.bib"
     elif literature_type == "Review":
         INPUT_FOLDER = INPUT_FOLDER_REV
         PROCESSED_FOLDER = PROCESSED_FOLDER_REV
@@ -767,6 +769,8 @@ def main():
         # 初始化客户端
         client = genai.Client(api_key=GEMINI_API_KEY_REV)
         MASTER_PROMPT = PROMPT_REV
+        # 总的 bibtex 文件名，加上时间戳
+        bib_filename_with_timestamp = rf"Review_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}_Master_Bib.bib"
 
     # 确保路径存在
     if not os.path.exists(INPUT_FOLDER): os.makedirs(INPUT_FOLDER)
@@ -774,9 +778,6 @@ def main():
     if not os.path.exists(OBSIDIAN_FOLDER): os.makedirs(OBSIDIAN_FOLDER)
     if not os.path.exists(BIBTEX_FOLDER): os.makedirs(BIBTEX_FOLDER)
 
-    # 为循环准备一些基础变量
-    # 总的 bibtex 文件名，加上时间戳
-    bib_filename_with_timestamp = rf"{datetime.datetime.now().strftime('%Y%m%d_%H%M')}_Master_Bib.bib"
     # 循环显示篇数的迭代值
     i_paper = 1
 
