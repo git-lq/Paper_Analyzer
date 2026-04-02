@@ -10,84 +10,86 @@ import datetime
 import hashlib
 from dotenv import load_dotenv
 
-
-
 # ====================================================
 # 🔴 【读取 keys and paths】 🔴
 # ====================================================
 #region
 load_dotenv()
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# 读取 keys
+GEMINI_API_KEY_EMP = os.getenv("GEMINI_API_KEY_EMP")
+GEMINI_API_KEY_REV = os.getenv("GEMINI_API_KEY_REV")
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
-DATABASE_ID = os.getenv("DATABASE_ID")
+DATABASE_ID_EMP = os.getenv("DATABASE_ID_EMP")
+DATABASE_ID_REV = os.getenv("DATABASE_ID_REV")
 EASYSCHOLAR_KEY = os.getenv("EASYSCHOLAR_KEY")
 
-# 文件夹路径配置 (默认在当前目录，无需修改)
-INPUT_FOLDER = os.getenv("INPUT_FOLDER")
-PROCESSED_FOLDER = os.getenv("PROCESSED_FOLDER")
+# 文件夹路径
+INPUT_FOLDER_EMP = os.getenv("INPUT_FOLDER_EMP")
+PROCESSED_FOLDER_EMP = os.getenv("PROCESSED_FOLDER_EMP")
+INPUT_FOLDER_REV = os.getenv("INPUT_FOLDER_REV")
+PROCESSED_FOLDER_REV = os.getenv("PROCESSED_FOLDER_REV")
 BIBTEX_FOLDER = os.getenv("BIBTEX_FOLDER") # 本地 Bibtex 备份目录
 OBSIDIAN_VAULT = os.getenv("OBSIDIAN_VAULT") # Obsidian Vault 名称
 OBSIDIAN_FOLDER = os.getenv("OBSIDIAN_FOLDER") # 本地 Markdown 备份目录
-HASH_DB_FILE = os.getenv("HASH_DB_FILE") # 文件指纹库路径
+HASH_DB_FILE_EMP = os.getenv("HASH_DB_FILE_EMP") # 文件指纹库路径
+HASH_DB_FILE_REV = os.getenv("HASH_DB_FILE_REV") # 文件指纹库路径
 # ==========================================
 
 # 推荐使用的模型名称（请确保你在 Google AI Studio 中看到的名字与此一致）
 MODEL_NAME = os.getenv("MODEL_NAME")
 
 # 读取 Master Prompt
-PROMPT_EMP = os.getenv("PROMPT_EMP")
-PROMPT_REV = os.getenv("PROMPT_REV")
+from prompts import PROMPT_EMP, PROMPT_REV
 #endregion
 
 # ==========================================
 # 🟢 核心逻辑区 (使用全新 google.genai 架构) 🟢
 # ==========================================
-# 初始化客户端
-client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 # 提示用户选择文献类型，并获取输入
 def get_user_input():
     choice = ""
     literature_type = ""
-    prompt_path = ""
     while choice == "":
-        print("Hello! I'm Paper Analyzer.\nPlease select the literature type you want analyzed:")
+        print("=============================")
+        print("😊 Hello! I'm Paper Analyzer.")
+        print("=============================")
+        print("\nPlease select the literature type you want analyzed:")
         print("1. Empirical research papers\n2. Review articles")
 
         choice = input("Enter the number of your choice: ").strip()
 
         if choice == "1":
             literature_type = "Empirical"
-            print(f"I'm going to analyze {literature_type} papers.")
-            print("Do you confirm? y/n")
-            confirm = input("Do you confirm? y/n").strip()
+            print(f"\nI'm going to analyze {literature_type} papers.")
+            print("⚠️ Please make sure the PDF files in your INPUT FOlDER correspond to this type ⚠️")
+            confirm = input("Do you confirm? Yes(y)/No(n): ").strip()
             if confirm == "y":
-                prompt_path = PROMPT_EMP
                 break
             else:
+                print("Please choose the literature type again, or press CTRL+C to break the program.\n")
                 choice = ""
                 literature_type = ""
                 continue
         elif choice == "2":
             literature_type = "Review"
-            print(f"I'm going to analyze {literature_type} papers.")
-            print("Do you confirm? y/n")
-            confirm = input("Do you confirm? y/n").strip()
+            print(f"\nI'm going to analyze {literature_type} papers.")
+            print("⚠️ Please make sure the PDF files in your INPUT FOlDER correspond to this type ⚠️")
+            confirm = input("Do you confirm?  Yes(y)/No(n): ").strip()
             if confirm == "y":
-                prompt_path = PROMPT_REV
                 break
             else:
+                print("Please choose the literature type again, or press CTRL+C to break the program.\n")
                 choice = ""
                 literature_type = ""
                 continue
         else:
-            print("Invalid choice. Please enter 1 or 2.")
+            print("❌Invalid choice. Please enter 1 or 2.\n")
             choice = ""
             continue
     
-    return literature_type, prompt_path
+    return literature_type
 
 
 # region 哈希值查重、生成记录
@@ -102,7 +104,7 @@ def get_file_md5(file_path):
     return hasher.hexdigest()
 
 # 根据 MD5 哈希值，在指纹库里检查是否重复
-def is_duplicate(file_hash):
+def is_duplicate(file_hash, HASH_DB_FILE):
     """去指纹库里查重"""
     if not os.path.exists(HASH_DB_FILE):
         return False
@@ -111,7 +113,7 @@ def is_duplicate(file_hash):
     return file_hash in hashes
 
 # 将 MD5 哈希值写入指纹库
-def record_hash(file_hash):
+def record_hash(file_hash, HASH_DB_FILE):
     """解析成功后，将指纹刻入历史记录碑"""
     print("7️⃣ 正在记录哈希值指纹...")
     with open(HASH_DB_FILE, 'a', encoding='utf-8') as f:
@@ -136,7 +138,7 @@ def smart_format(text):
         return " ".join(formatted_words)
 
 # region 第1步：上传文件到 AI 并获取 JSON
-def get_paper_analysis(prompt, pdf_path):
+def get_paper_analysis(prompt, pdf_path, client):
     print(f"1️⃣ 正在上传文件并调用大模型分析...")
     uploaded_file = None
     
@@ -189,6 +191,13 @@ def get_journal_ranks(journal_name):
     """
     print(f"2️⃣ 正在查询期刊 {journal_name} 等级...")
 
+    rank_results = []
+    indicator_dict = {
+        "sciif": 0,
+        "sciif5": 0,
+        "jci": 0
+    }
+
     if not journal_name or journal_name == "N/A":
         rank_results = ["N/A"]
         print("   ⏩ 非期刊文章，跳过该步骤！")
@@ -225,13 +234,6 @@ def get_journal_ranks(journal_name):
     }
     
     custom_rank_fieldsname = ["abbName", "oneRankText", "twoRankText", "threeRankText", "fourRankText", "fiveRankText"]
-
-    rank_results = []
-    indicator_dict = {
-        "sciif": 0,
-        "sciif5": 0,
-        "jci": 0
-    }
 
     try:
         # 遵守官方限速：每秒最多2次请求
@@ -294,20 +296,15 @@ def save_to_obsidian(data, pdf_local_path, journal_ranks, indicators, literature
     if not os.path.exists(OBSIDIAN_FOLDER):
         os.makedirs(OBSIDIAN_FOLDER)
     
-    # 创建一个 Entities 文件夹来存放作者、方法等“实体节点”
+    # 检查并创建一个 Entities 文件夹来存放作者、方法等“实体节点”
     entities_folder = os.path.join(OBSIDIAN_FOLDER, "Entities")
     if not os.path.exists(entities_folder):
         os.makedirs(entities_folder)
 
-    # 检查并创建 Empirical 文件夹
-    empirical_folder = os.path.join(OBSIDIAN_FOLDER, "Empirical")
-    if not os.path.exists(empirical_folder):
-        os.makedirs(empirical_folder)
-
     props = data.get("properties", {})
     md_content = data.get("markdown_content", "无内容")
 
-    # 批量生成空白的实体文件（为图谱上色做准备）
+    # 定义函数生成批量生成空白的实体文件（为图谱上色做准备）
     def create_entity(prefix, items, subfolder_name):
         # 确保某类实体的专属子文件夹存在
         subfolder_path = os.path.join(entities_folder, subfolder_name)
@@ -340,7 +337,15 @@ def save_to_obsidian(data, pdf_local_path, journal_ranks, indicators, literature
     invalid_chars = ['<', '>', ':', '"', '/', '\\', '|', '?', '*']
     for char in invalid_chars:
         safe_title = safe_title.replace(char, '_')
-    filepath = os.path.join(OBSIDIAN_FOLDER, f"{safe_title} - {first_author}.md")
+
+    # 检查并创建 Empirical 或 Review 文件夹，创建目标文件名
+    if literature_type == "Empirical":
+        type_folder = os.path.join(OBSIDIAN_FOLDER, "Empirical")
+    elif literature_type == "Review":
+        type_folder = os.path.join(OBSIDIAN_FOLDER, "Review")
+    if not os.path.exists(type_folder):
+            os.makedirs(type_folder)
+    filepath = os.path.join(type_folder, f"{safe_title} - {first_author}.md")
     
     # 生成 Obsidian 专属的本地文件安全链接 (file:///)
     abs_path = os.path.abspath(pdf_local_path).replace("\\", "/")
@@ -394,9 +399,16 @@ def save_to_obsidian(data, pdf_local_path, journal_ranks, indicators, literature
     data_yaml = "\n".join([f"  - \"[[📊 {str(d).strip()}]]\"" for d in props.get("Data Tags", [])])
     context_yaml = "\n".join([f"  - \"[[🗺️ {str(s).strip()}]]\"" for s in props.get("Context Tags", [])])
     keywords_yaml = "\n".join([f"  - \"[[🔑 {str(p).strip()}]]\"" for p in props.get("Keywords", [])])
+    # 以下是独属Review类文章的几个属性
+    if literature_type == "Review":
+        fields_yaml = "\n".join([f"  - \"[[🌐 {smart_format(p)}]]\"" for p in props.get("Fields", [])])
+        lit_src_yaml = "\n".join([f"  - \"[[📚 {smart_format(r)}]]\"" for r in props.get("Lit Src Tags", [])])
+        filter_yaml = "\n".join([f"  - \"[[🔍 {smart_format(b)}]]\"" for b in props.get("Filter Tags", [])])
 
     # 拼装标准的 YAML Frontmatter 属性 + 正文
-    obsidian_note = f"""---
+    # 实证文章
+    if literature_type == "Empirical":
+        obsidian_note = f"""---
 Title: "{props.get('Title Full', 'Untitled')}"
 Aliases: ["{props.get('Title Short EN', '')}", "{props.get('Title Short CN', '')}"]
 Year: {props.get('Year', 'Unknown')}
@@ -426,19 +438,65 @@ Local_path: {obsidian_file_link}
 ---
 {md_content}
 """
+    # 综述文章
+    elif literature_type == "Review":
+        obsidian_note = f"""---
+Title: "{smart_format(props.get('Title Full', 'Untitled'))}"
+Aliases: ["{smart_format(props.get('Title Short EN', ''))}", "{props.get('Title Short CN', '')}"]
+Year: {props.get('Year', 'Unknown')}
+Authors:
+{authors_yaml if authors_yaml else '  - "N/A"'}
+Journal_ranks:
+{journal_ranks_yaml}
+J_IF: {indicators['sciif'] if indicators["sciif"] != 0 else 'N/A'}
+J_IF5: {indicators['sciif5'] if indicators["sciif"] != 0 else 'N/A'}
+J_JCI: {indicators['jci'] if indicators["jci"] != 0 else 'N/A'}
+Keywords:
+{keywords_yaml if keywords_yaml else '  - "N/A"'}
+Fields:
+{fields_yaml if fields_yaml else '  - "N/A"'}
+Literature sources:
+{lit_src_yaml if lit_src_yaml else '  - "N/A"'}
+Filter used:
+{filter_yaml if filter_yaml else '  - "N/A"'}
+Methods summarized:
+{methods_yaml if methods_yaml else '  - "N/A"'}
+Data summarized:
+{data_yaml if data_yaml else '  - "N/A"'}
+Contexts summarized:
+{context_yaml if context_yaml else '  - "N/A"'}
+Suggestion: "[[👉 {props.get('Suggestion', 'G')}]]"
+Relevance: {props.get('Relevance', '')}
+Literature quality: {props.get('Lit Qlt', '')}
+Field intro value: {props.get('Fld Value', '')}
+Dictionary value: {props.get('Dict Value', '')}
+Inspiration value: {props.get('Insp Value', '')}
+DOI: {doi_link}
+Local_path: {obsidian_file_link}
+---
+{md_content}
+"""
+
+    # 提取并生成各类实体，⚠️ 只要有标签 [[]]，就必须要有实体！这样才能筛选对应节点！
+    create_entity("👤", props.get("Authors", []), "Authors")
+    create_entity("🛠️", props.get("Method Tags", []), "Methods")
+    create_entity("📊", props.get("Data Tags", []), "Data")
+    create_entity("🗺️", props.get("Context Tags", []), "Contexts")
+    create_entity("🔑", props.get("Keywords", []), "Keywords")
+    create_entity("🎖️", journal_ranks, "Journal_ranks")
+    # 独属实证文章的
+    if literature_type == "Empirical":
+        create_entity("🧠 Type ", props.get("Logic Type", []), "Logic_types")
+    elif literature_type == "Review":
+        create_entity("🌐", props.get("Fields", []), "Fields")
+        create_entity("📚", props.get("Lit Src Tags", []), "Literature_sources")
+        create_entity("🔍", props.get("Filter Tags", []), "Filters")
+        create_entity("👉", props.get("Suggestion", []), "Suggestion")
 
     # 4. 写入本地文件
     try:
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(obsidian_note)
-        # 提取并生成各类实体，⚠️ 只要有标签 [[]]，就必须要有实体！这样才能筛选对应节点！
-        create_entity("👤", props.get("Authors", []), "Authors")
-        create_entity("🛠️", props.get("Method Tags", []), "Methods")
-        create_entity("📊", props.get("Data Tags", []), "Data")
-        create_entity("🗺️", props.get("Context Tags", []), "Contexts")
-        create_entity("🔑", props.get("Keywords", []), "Keywords")
-        create_entity("🧠 Type ", props.get("Logic Type", []), "Logic_types")
-        create_entity("🎖️", journal_ranks, "Journal_ranks")
         # 返回结果
         print(f"   ✅ 本地 Markdown 保存成功: {safe_title} - {first_author}.md")
         return True
@@ -486,7 +544,7 @@ def save_bibtex(data, pdf_local_path, bib_file_with_timestamp):
         return False
 
 # region 第5步：导入到 Notion
-def push_to_notion(data, pdf_local_path, journal_ranks, indicators):
+def push_to_notion(data, pdf_local_path, journal_ranks, indicators, literature_type):
     print("5️⃣ 正在推送数据到 Notion...")
     url = "https://api.notion.com/v1/pages"
     headers = {
@@ -515,22 +573,47 @@ def push_to_notion(data, pdf_local_path, journal_ranks, indicators):
     else:
         ranks = "N/A"
 
-    notion_properties = {
-        "Title Full": {"title": [{"text": {"content": smart_format(props.get("Title Full", "Untitled"))[:2000]}}]},
-        "Title Short EN": {"rich_text": [{"text": {"content": smart_format(props.get("Title Short EN", ""))[:2000]}}]},
-        "Title Short CN": {"rich_text": [{"text": {"content": str(props.get("Title Short CN", ""))[:2000]}}]},
-        "Authors": {"multi_select": [{"name": str(a).replace(',', '').title()} for a in props.get("Authors", [])]},
-        "J Ranks": {"rich_text": [{"text": {"content": ranks}}]},
-        "IF": {"number": indicators["sciif"]},
-        "IF5": {"number": indicators["sciif5"]},
-        "JCI": {"number": indicators["jci"]},
-        "Logic Type": {"select": {"name": str(props.get("Logic Type", "G"))}},
-        "Keywords": {"multi_select": [{"name": smart_format(str(t).replace(',', ''))} for t in props.get("Keywords", [])]},
-        "Data Tags": {"multi_select": [{"name": smart_format(str(t).replace(',', ''))} for t in props.get("Data Tags", [])]},
-        "Method Tags": {"multi_select": [{"name": smart_format(str(t).replace(',', ''))} for t in props.get("Method Tags", [])]},
-        "Context Tags": {"multi_select": [{"name": smart_format(str(t).replace(',', ''))} for t in props.get("Context Tags", [])]},
-        "Local Path": {"url": custom_link} # 自动注入本地绝对路径！
-    }
+    # 生成 Notion 数据库属性，分类别
+    # 实证文章：
+    if literature_type == "Empirical":
+        notion_properties = {
+            "Title Full": {"title": [{"text": {"content": smart_format(props.get("Title Full", "Untitled"))[:2000]}}]},
+            "Title Short EN": {"rich_text": [{"text": {"content": smart_format(props.get("Title Short EN", ""))[:2000]}}]},
+            "Title Short CN": {"rich_text": [{"text": {"content": str(props.get("Title Short CN", ""))[:2000]}}]},
+            "Authors": {"multi_select": [{"name": str(a).replace(',', '').title()} for a in props.get("Authors", [])]},
+            "J Ranks": {"rich_text": [{"text": {"content": ranks}}]},
+            "IF": {"number": indicators["sciif"]},
+            "IF5": {"number": indicators["sciif5"]},
+            "JCI": {"number": indicators["jci"]},
+            "Logic Type": {"select": {"name": str(props.get("Logic Type", "G"))}},
+            "Keywords": {"multi_select": [{"name": smart_format(str(t).replace(',', ''))} for t in props.get("Keywords", [])]},
+            "Data Tags": {"multi_select": [{"name": smart_format(str(t).replace(',', ''))} for t in props.get("Data Tags", [])]},
+            "Method Tags": {"multi_select": [{"name": smart_format(str(t).replace(',', ''))} for t in props.get("Method Tags", [])]},
+            "Context Tags": {"multi_select": [{"name": smart_format(str(t).replace(',', ''))} for t in props.get("Context Tags", [])]},
+            "Local Path": {"url": custom_link} # 自动注入本地绝对路径！
+        }
+        DATABASE_ID = DATABASE_ID_EMP
+    elif literature_type == "Review":
+        notion_properties = {
+            "Title Full": {"title": [{"text": {"content": smart_format(props.get("Title Full", "Untitled"))[:2000]}}]},
+            "Title Short EN": {"rich_text": [{"text": {"content": smart_format(props.get("Title Short EN", ""))[:2000]}}]},
+            "Title Short CN": {"rich_text": [{"text": {"content": str(props.get("Title Short CN", ""))[:2000]}}]},
+            "Authors": {"multi_select": [{"name": str(a).replace(',', '')} for a in props.get("Authors", [])]},
+            "J Ranks": {"rich_text": [{"text": {"content": ranks}}]},
+            "IF": {"number": indicators["sciif"]},
+            "IF5": {"number": indicators["sciif5"]},
+            "JCI": {"number": indicators["jci"]},
+            "Keywords": {"multi_select": [{"name": smart_format(str(t).replace(',', ''))} for t in props.get("Keywords", [])]},
+            "Fields": {"multi_select": [{"name": smart_format(str(p).replace(',', ''))} for p in props.get("Fields", [])]},
+            "Lit Src Tags": {"multi_select": [{"name": smart_format(str(r).replace(',', ''))} for r in props.get("Lit Src Tags", [])]},
+            "Filter Tags": {"multi_select": [{"name": smart_format(str(b).replace(',', ''))} for b in props.get("Filter Tags", [])]},
+            "Data Tags": {"multi_select": [{"name": smart_format(str(t).replace(',', ''))} for t in props.get("Data Tags", [])]},
+            "Method Tags": {"multi_select": [{"name": smart_format(str(t).replace(',', ''))} for t in props.get("Method Tags", [])]},
+            "Context Tags": {"multi_select": [{"name": smart_format(str(t).replace(',', ''))} for t in props.get("Context Tags", [])]},
+            "Suggestion": {"select": {"name": str(props.get("Suggestion", "0"))}},
+            "Local Path": {"url": custom_link} # 自动注入本地绝对路径！
+        }
+        DATABASE_ID = DATABASE_ID_REV
 
     # 处理 Year (保持 number 数字类型)
     if props.get("Year"):
@@ -539,10 +622,15 @@ def push_to_notion(data, pdf_local_path, journal_ranks, indicators):
         except ValueError:
             pass
     
-    # 处理三个评分 (适配你 Notion 里的 select 单选标签类型)
-    for score_col in ["Relevance", "Copy Pttl", "Overall", "Cnxt Trnst Pttl", "Mthd Trnst Pttl"]:
-        if props.get(score_col):
-            notion_properties[score_col] = {"select": {"name": str(props[score_col])}}
+    # 处理评分 (适配你 Notion 里的 select 单选标签类型)
+    if literature_type == "Empirical":
+        for score_col in ["Relevance", "Copy Pttl", "Overall", "Cnxt Trnst Pttl", "Mthd Trnst Pttl"]:
+            if props.get(score_col):
+                notion_properties[score_col] = {"select": {"name": str(props[score_col])}}
+    elif literature_type == "Review":
+        for score_col in ["Relevance", "Lit Qlt", "Fld Value", "Dict Value", "Insp Value"]:
+            if props.get(score_col):
+                notion_properties[score_col] = {"select": {"name": str(props[score_col])}}
 
     # 智能 DOI/URL 处理
     doi_val = str(props.get("DOI", "")).strip()
@@ -620,7 +708,7 @@ def push_to_notion(data, pdf_local_path, journal_ranks, indicators):
         return False
 
 # region 第6步：重命名并移动 PDF
-def rename_pdf(data):
+def rename_pdf(data, PROCESSED_FOLDER):
     # 获取 JSON 的中文短标题
     raw_title_short_cn = data.get("properties", {}).get("Title Short CN", "Untitled")
 
@@ -656,12 +744,23 @@ def move_pdf(pdf_path, pdf_path_processed):
 
 # region 主函数
 def main():
-    
-    literature_type, prompt_path = get_user_input()
+    literature_type = get_user_input()
 
-    # 读取对应的 prompt
-    with open(prompt_path, 'r', encoding='utf-8') as f:
-        MASTER_PROMPT = f.read()
+    # 读取对应的路径，使用对应的key启动客户端，赋值对应的Prompt
+    if literature_type == "Empirical":
+        INPUT_FOLDER = INPUT_FOLDER_EMP
+        PROCESSED_FOLDER = PROCESSED_FOLDER_EMP
+        HASH_DB_FILE = HASH_DB_FILE_EMP
+        # 初始化客户端
+        client = genai.Client(api_key=GEMINI_API_KEY_EMP)
+        MASTER_PROMPT = PROMPT_EMP
+    elif literature_type == "Review":
+        INPUT_FOLDER = INPUT_FOLDER_REV
+        PROCESSED_FOLDER = PROCESSED_FOLDER_REV
+        HASH_DB_FILE = HASH_DB_FILE_REV
+        # 初始化客户端
+        client = genai.Client(api_key=GEMINI_API_KEY_REV)
+        MASTER_PROMPT = PROMPT_REV
 
     # 确保路径存在
     if not os.path.exists(INPUT_FOLDER): os.makedirs(INPUT_FOLDER)
@@ -690,9 +789,9 @@ def main():
         pdf_path = os.path.join(INPUT_FOLDER, pdf_file)
         
         # 检查是否重复
-        print(f"0️⃣ 已获取第 {i_paper} 篇论文: {os.path.basename(pdf_path)}！\n   正在用 MD5 哈希值检测该论文是否重复...")
+        print(f"0️⃣ 已获取第 {i_paper} 篇PDF文件: {os.path.basename(pdf_path)}！\n   正在用 MD5 哈希值检测该论文是否重复...")
         file_hash = get_file_md5(pdf_path)
-        if is_duplicate(file_hash):
+        if is_duplicate(file_hash, HASH_DB_FILE):
             print(f"   ⏩ 该论文已重复，将被跳过！")
             # 移动到重复文件夹内
             try:
@@ -708,11 +807,11 @@ def main():
             print("   ✅ 未发现重复，开始分析...")         
 
         # 调用大模型并获取返回的 JSON
-        result_json = get_paper_analysis(MASTER_PROMPT, pdf_path)
+        result_json = get_paper_analysis(MASTER_PROMPT, pdf_path, client)
 
-        if result_json:
+        if result_json and result_json != "NAP" and result_json != "FW":
             # 根据获取到的中文短标题，设置输出 PDF 路径
-            pdf_path_processed = rename_pdf(result_json)
+            pdf_path_processed = rename_pdf(result_json, PROCESSED_FOLDER)
             
             # 获取期刊等级
             journal_name = result_json.get("properties", {}).get("Journal", "")
@@ -730,7 +829,7 @@ def main():
             # 如果前面几步都成功完成，移动文件并保存哈希值
             if success1 and success2 and success3:
                 move_pdf(pdf_path, pdf_path_processed)
-                record_hash(file_hash)
+                record_hash(file_hash, HASH_DB_FILE)
             else:
                 steps = [
                     (success1, "保存到 Obsidian 失败"),
@@ -739,24 +838,33 @@ def main():
                 ]
                 failed = [step[1] for step in steps if not step[0]]
                 print(f"   ❌ 未移动文件，原因：{', '.join(failed)}。\n   ⚠️ 注意检查其他环节的生成结果！必要时将其删除！")
+        elif result_json == "NAP":
+            print("   ⚠️经过LLM分析，该PDF文件内容并非学术论文！将跳过并分析下一篇！")
+        elif result_json == "FW":
+            print("   ⚠️LLM无法打开或无法读取该PDF文件！将跳过并分析下一篇！")
 
-        i_paper += 1   
-        print("☕ 为避免触发免费额度限制，休眠 70 秒...")
-        time.sleep(70)
-        print("-" * 40)
-        
+        if not i_paper == len(pdf_files):
+            i_paper += 1   
+            print("☕ 为避免触发免费额度限制，休眠 70 秒...")
+            time.sleep(70)
+            print("-" * 40)
+        else:
+            print("-" * 40)
+    
     print("🎉 全部任务执行完毕！")
     print("=" * 40)
 
     #region 以下是调试代码，实际使用时保持注释状态即可
+    
     # 🔴 这是一份完美符合我们 Prompt 要求的假 JSON 数据
-    # dummy_json = {
-    #   "properties": {
+    # result_json = {
+    #     "properties": {
     #     "Title Full": "The global homogenization of urban form. An assessment of 194 cities across time",
     #     "Title Short EN": "Global Homogenization Urban Form",
     #     "Title Short CN": "城市更新对地方依恋影响的研究框架",
     #     "Year": 2024,
     #     "Authors": ["Michael Batty", "John Doe"],
+    #     "Journal": "Frontiers of Architectural Research",
     #     "Logic Type": "B",
     #     "Keywords": ["SVI", "Clustering"],
     #     "Data Tags": ["SVI", "Clustering"],
@@ -768,9 +876,9 @@ def main():
     #     "Cnxt Trnst Pttl": 3,
     #     "Mthd Trnst Pttl": 3,
     #     "Overall": 4
-    #   },
-    #   "BibTeX": "@article{zhang2024quantifying,\n  title={Quantifying the morphological evolution of historical districts using deep learning and street view imagery},\n  author={Zhang, Wei and Batty, Michael and Li, Xia},\n  journal={Computers, Environment and Urban Systems},\n  volume={105},\n  pages={102000},\n  year={2024},\n  publisher={Elsevier},\n  doi={10.1016/j.compenvurbsys.2024.102000},\n  keywords={★5_Overall, ★5_Relevance, CNN, SVI}\n}",
-    #   "markdown_content": "## 1. 逻辑类型判定\n类型 B 分类/模式识别型\n\n## 2. 核心范式公式\n```mermaid\ngraph TB\n    A[开源数据爬取] --> B[NLP量化语义]\n    B --> C[K-Means聚类]\n    C --> D[识别空间模式]\n```\n\n## 3. 方法与工具拆解\n* 原始数据采集: 爬取OSM开源数据\n* 数据预处理/结构化: 转化为路网矩阵\n* 数据清洗: 剔除断头路\n* 特征提取: 计算中心度\n* 核心模型/空间分析: K-Means聚类\n* 因果推断/解释: 原文未明确说明\n* 数据及结果可视化: 使用散点图和地图展示分类结果\n\n## 4. 关键要素速览\n* 研究对象: 全球194个城市的形态数据\n* 理论锚点: 城市形态学理论\n* 研究目标: 揭示全球城市形态的演变规律\n* 核心研究问题: 全球城市形态是否随时间趋于同质化？\n* 核心结论: 是的，存在显著的同质化趋势。\n* 数据源的可获取性: 开源免费\n\n## 5. 对我的价值评估\n* 相关度: 5分，与我的历史城市形态研究高度相关。\n* 复刻难度: 3分，数据开源，聚类算法基础，可尝试复刻。\n* 核心启示: 跨城市大样本对比的方法非常新颖。\n* 场景迁移潜力: 可以将此聚类方法平移到国内历史文化名城的形态对比上。\n* 技术热插拔潜力: 原文的K-Means较老，可以尝试用深度聚类算法替换。\n* 真实缺陷与改进潜力: 缺乏对文化语义的深入探讨，可以结合NLP进行改进。\n\n## 6. 最终推荐决议\n4分，强烈建议略读了解其数据构建和对比框架。"
+    #     },
+    #     "BibTeX": "@article{zhang2024quantifying,\n  title={Quantifying the morphological evolution of historical districts using deep learning and street view imagery},\n  author={Zhang, Wei and Batty, Michael and Li, Xia},\n  journal={Computers, Environment and Urban Systems},\n  volume={105},\n  pages={102000},\n  year={2024},\n  publisher={Elsevier},\n  doi={10.1016/j.compenvurbsys.2024.102000},\n  keywords={★5_Overall, ★5_Relevance, CNN, SVI}\n}",
+    #     "markdown_content": "## 1. 逻辑类型判定\n类型 B 分类/模式识别型\n\n## 2. 核心范式公式\n```mermaid\ngraph TB\n    A[开源数据爬取] --> B[NLP量化语义]\n    B --> C[K-Means聚类]\n    C --> D[识别空间模式]\n```\n\n## 3. 方法与工具拆解\n* 原始数据采集: 爬取OSM开源数据\n* 数据预处理/结构化: 转化为路网矩阵\n* 数据清洗: 剔除断头路\n* 特征提取: 计算中心度\n* 核心模型/空间分析: K-Means聚类\n* 因果推断/解释: 原文未明确说明\n* 数据及结果可视化: 使用散点图和地图展示分类结果\n\n## 4. 关键要素速览\n* 研究对象: 全球194个城市的形态数据\n* 理论锚点: 城市形态学理论\n* 研究目标: 揭示全球城市形态的演变规律\n* 核心研究问题: 全球城市形态是否随时间趋于同质化？\n* 核心结论: 是的，存在显著的同质化趋势。\n* 数据源的可获取性: 开源免费\n\n## 5. 对我的价值评估\n* 相关度: 5分，与我的历史城市形态研究高度相关。\n* 复刻难度: 3分，数据开源，聚类算法基础，可尝试复刻。\n* 核心启示: 跨城市大样本对比的方法非常新颖。\n* 场景迁移潜力: 可以将此聚类方法平移到国内历史文化名城的形态对比上。\n* 技术热插拔潜力: 原文的K-Means较老，可以尝试用深度聚类算法替换。\n* 真实缺陷与改进潜力: 缺乏对文化语义的深入探讨，可以结合NLP进行改进。\n\n## 6. 最终推荐决议\n4分，强烈建议略读了解其数据构建和对比框架。"
     # }
 
     # # 🔴 以下是 Notion 本地断点调试代码 ============================

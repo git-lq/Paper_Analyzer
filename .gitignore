@@ -1,4 +1,5 @@
 .env
+prompts.py
 
 Paper_Analyzer.code-workspace
 test.ipynb
