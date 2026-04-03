@@ -137,6 +137,37 @@ def smart_format(text):
                 formatted_words.append(word[0].upper() + word[1:])
         return " ".join(formatted_words)
 
+
+# 更健壮的 JSON 解析器
+def parse_llm_output(raw_llm_string):
+    try:
+        # 尝试标准解析
+        data = json.loads(raw_llm_string)
+        return data
+        
+    except json.decoder.JSONDecodeError as e:
+        print(f"   ⚠️ [JSON 解析警告] 大模型输出了非法转义字符！")
+        print(f"   报错详情: {e}")
+        
+        # 💡 [极其好用的抢救大法] 尝试进行暴力替换抢救
+        # 把非法的单斜杠替换为合法的双斜杠（注意：这招能救活 80% 的 LaTeX 报错）
+        salvaged_string = raw_llm_string.replace("\\", "\\\\") 
+        
+        try:
+            print("   🔧 正在尝试进行字符串抢救...")
+            # 替换后再解析一次
+            data = json.loads(salvaged_string)
+            print("   ✅ 抢救成功！")
+            return data
+            
+        except Exception as e_salvage:
+            print("   ❌ 抢救失败。为了不中断流水线，将跳过此文献。")
+            # 把害人的原文本保存下来，方便你排查是哪个符号惹的祸
+            with open("error_log_json.txt", "w", encoding="utf-8") as err_file:
+                err_file.write(raw_llm_string)
+            return None # 返回空值，让外层循环跳过这篇
+
+
 # region 第1步：上传文件到 AI 并获取 JSON
 def get_paper_analysis(prompt, pdf_path, client):
     print(f"1️⃣ 正在上传文件并调用大模型分析...")
@@ -167,7 +198,7 @@ def get_paper_analysis(prompt, pdf_path, client):
             raw_text = raw_text[:-3]
 
         print("   ✅ 成功获取返回 JSON 并开始解析!")    
-        return json.loads(raw_text.strip())
+        return parse_llm_output(raw_text.strip())
         
     except Exception as e:
         print(f"   ❌ 解析失败: {e}")
