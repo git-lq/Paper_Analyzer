@@ -468,7 +468,9 @@ Context_transit_potential: {props.get('Cnxt Trnst Pttl', '')}
 Method_transit_potential: {props.get('Mthd Trnst Pttl', '')}
 DOI: {doi_link}
 Local_path: {obsidian_file_link}
+Rating: 0
 ---
+# # 🌟 Rating: `INPUT[slider(minValue(0), maxValue(5), stepSize(0.5), addLabels(true)):Rating]`\n
 {md_content}
 """
     # 综述文章
@@ -507,7 +509,9 @@ Dictionary value: {props.get('Dict Value', '')}
 Inspiration value: {props.get('Insp Value', '')}
 DOI: {doi_link}
 Local_path: {obsidian_file_link}
+Rating: 0
 ---
+# # 🌟 Rating: `INPUT[slider(minValue(0), maxValue(5), stepSize(0.5), addLabels(true)):Rating]`\n
 {md_content}
 """
 
