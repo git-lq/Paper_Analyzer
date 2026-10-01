@@ -1,45 +1,78 @@
 import os
+import sys
 import json
 import time
 import shutil
 import requests
 from google import genai
-import uuid # 这是一个内置库，不用额外安装，用来生成随机纯英文文件名
+import uuid
 import urllib.parse
 import datetime
 import hashlib
 from dotenv import load_dotenv
 
 # ====================================================
-# 🔴 【读取 keys and paths】 🔴
+# 🔴 【核心解耦：环境配置与 Prompt 动态加载】 🔴
 # ====================================================
 #region
-load_dotenv()
-# 读取 keys
+# 1. 识别核心代码目录 (Git 仓库) 与 当前运行所在目录 (主题文件夹)
+CORE_DIR = os.path.dirname(os.path.abspath(__file__))
+THEME_DIR = os.getcwd()
+
+# 2. 第一层加载：Git 仓库全局 .env (提供 API keys 和全局默认值)
+global_env_path = os.path.join(CORE_DIR, ".env")
+if os.path.exists(global_env_path):
+    load_dotenv(dotenv_path=global_env_path)
+
+# 3. 第二层加载：主题专属 .theme_env (存在时强制覆盖路径变量)
+theme_env_path = os.path.join(THEME_DIR, ".theme_env")
+if os.path.exists(theme_env_path):
+    load_dotenv(dotenv_path=theme_env_path, override=True)
+    print(f"📁 已载入主题配置: {theme_env_path}")
+else:
+    print(f"ℹ️ 未检测到主题配置 (.theme_env)，沿用全局配置。")
+
+# --- 读取 Keys 与通用参数 ---
 GEMINI_API_KEY_EMP = os.getenv("GEMINI_API_KEY_EMP")
 GEMINI_API_KEY_REV = os.getenv("GEMINI_API_KEY_REV")
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 DATABASE_ID_EMP = os.getenv("DATABASE_ID_EMP")
 DATABASE_ID_REV = os.getenv("DATABASE_ID_REV")
 EASYSCHOLAR_KEY = os.getenv("EASYSCHOLAR_KEY")
+MODEL_NAME = os.getenv("MODEL_NAME")
 
-# 文件夹路径
+# --- 读取文件夹路径 (支持主题级覆盖) ---
 INPUT_FOLDER_EMP = os.getenv("INPUT_FOLDER_EMP")
 PROCESSED_FOLDER_EMP = os.getenv("PROCESSED_FOLDER_EMP")
 INPUT_FOLDER_REV = os.getenv("INPUT_FOLDER_REV")
 PROCESSED_FOLDER_REV = os.getenv("PROCESSED_FOLDER_REV")
-BIBTEX_FOLDER = os.getenv("BIBTEX_FOLDER") # 本地 Bibtex 备份目录
-OBSIDIAN_VAULT = os.getenv("OBSIDIAN_VAULT") # Obsidian Vault 名称
-OBSIDIAN_FOLDER = os.getenv("OBSIDIAN_FOLDER") # 本地 Markdown 备份目录
-HASH_DB_FILE_EMP = os.getenv("HASH_DB_FILE_EMP") # 文件指纹库路径
-HASH_DB_FILE_REV = os.getenv("HASH_DB_FILE_REV") # 文件指纹库路径
-# ==========================================
+BIBTEX_FOLDER = os.getenv("BIBTEX_FOLDER")
+OBSIDIAN_VAULT = os.getenv("OBSIDIAN_VAULT")
+OBSIDIAN_FOLDER = os.getenv("OBSIDIAN_FOLDER")
+HASH_DB_FILE_EMP = os.getenv("HASH_DB_FILE_EMP")
+HASH_DB_FILE_REV = os.getenv("HASH_DB_FILE_REV")
 
-# 推荐使用的模型名称（请确保你在 Google AI Studio 中看到的名字与此一致）
-MODEL_NAME = os.getenv("MODEL_NAME")
+# 4. 动态载入 Prompt (优先查找主题目录下的 prompts.py)
+if THEME_DIR not in sys.path:
+    sys.path.insert(0, THEME_DIR)
 
-# 读取 Master Prompt
-from prompts import PROMPT_EMP, PROMPT_REV
+try:
+    import prompts
+    # 重新加载确保读取到当前上下文的模块
+    import importlib
+    importlib.reload(prompts)
+    
+    PROMPT_EMP = prompts.PROMPT_EMP
+    PROMPT_REV = prompts.PROMPT_REV
+    
+    if os.path.abspath(prompts.__file__).startswith(THEME_DIR):
+        print(f"🧠 已挂载 [主题专属] Prompt: {prompts.__file__}")
+    else:
+        print(f"🧠 已挂载 [核心默认] Prompt: {prompts.__file__}")
+except Exception as e:
+    print(f"❌ 加载 Prompt 失败: {e}")
+    sys.exit(1)
+# ====================================================
 #endregion
 
 # ==========================================
@@ -783,118 +816,166 @@ def move_pdf(pdf_path, pdf_path_processed):
 # endregion
 
 
+# ====================================================
+# 🔴 【系统日志：终端与文件双轨记录】 🔴
+# ====================================================
+# region
+class DualLogger:
+    def __init__(self, log_filepath):
+        self.terminal = sys.stdout
+        self.log = open(log_filepath, "a", encoding="utf-8")
+        # 写入 Markdown 规范的开头
+        self.log.write(f"# 🚀 Paper Analyzer 运行日志\n\n")
+        self.log.write(f"**启动时间:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        self.log.write("```text\n") # 使用代码块包裹控制台输出，防止 emoji 破坏 Markdown 排版
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush() # 强制实时写入硬盘，防止程序崩溃时丢失遗言
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+        
+    def close(self):
+        self.log.write("\n```\n")
+        self.log.close()
+# endregion
+
+
 # region 主函数
 def main():
-    literature_type = get_user_input()
-
-    # 读取对应的路径，使用对应的key启动客户端，赋值对应的Prompt
-    if literature_type == "Empirical":
-        INPUT_FOLDER = INPUT_FOLDER_EMP
-        PROCESSED_FOLDER = PROCESSED_FOLDER_EMP
-        HASH_DB_FILE = HASH_DB_FILE_EMP
-        # 初始化客户端
-        client = genai.Client(api_key=GEMINI_API_KEY_EMP)
-        MASTER_PROMPT = PROMPT_EMP
-        # 总的 bibtex 文件名，加上时间戳
-        bib_filename_with_timestamp = rf"{datetime.datetime.now().strftime('%Y%m%d_%H%M')}_Master_Bib.bib"
-    elif literature_type == "Review":
-        INPUT_FOLDER = INPUT_FOLDER_REV
-        PROCESSED_FOLDER = PROCESSED_FOLDER_REV
-        HASH_DB_FILE = HASH_DB_FILE_REV
-        # 初始化客户端
-        client = genai.Client(api_key=GEMINI_API_KEY_REV)
-        MASTER_PROMPT = PROMPT_REV
-        # 总的 bibtex 文件名，加上时间戳
-        bib_filename_with_timestamp = rf"Review_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}_Master_Bib.bib"
-
-    # 确保路径存在
-    if not os.path.exists(INPUT_FOLDER): os.makedirs(INPUT_FOLDER)
-    if not os.path.exists(PROCESSED_FOLDER): os.makedirs(PROCESSED_FOLDER)
-    if not os.path.exists(OBSIDIAN_FOLDER): os.makedirs(OBSIDIAN_FOLDER)
-    if not os.path.exists(BIBTEX_FOLDER): os.makedirs(BIBTEX_FOLDER)
-
-    # 循环显示篇数的迭代值
-    i_paper = 1
-
-    # 读取 Input 目录下的 PDF 文件列表
-    pdf_files = [f for f in os.listdir(INPUT_FOLDER) if f.lower().endswith('.pdf')]
-    print("=" * 40)
-    if not pdf_files:
-        print("📭 Input 文件夹中没有找到 PDF 文件。")
-        return
-    print(f"🎯 找到 {len(pdf_files)} 篇待处理文献。开始运行自动化流程...")
-    print("-" * 40)
-
-    # 开始循环
-    for pdf_file in pdf_files:
-        # 获取并设定当前篇的原路径和输出路径
-        pdf_path = os.path.join(INPUT_FOLDER, pdf_file)
+    # --- 激活双轨日志系统 ---
+    log_dir = os.path.join(THEME_DIR, "Logs")
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir)
         
-        # 检查是否重复
-        print(f"0️⃣ 已获取第 {i_paper} 篇PDF文件: {os.path.basename(pdf_path)}！\n   正在用 MD5 哈希值检测该论文是否重复...")
-        file_hash = get_file_md5(pdf_path)
-        if is_duplicate(file_hash, HASH_DB_FILE):
-            print(f"   ⏩ 该论文已重复，将被跳过！")
-            # 移动到重复文件夹内
-            try:
-                shutil.move(pdf_path, os.path.join(f"{PROCESSED_FOLDER}/Repeated", pdf_file))
-                print(f"   ✅ 已将重复文件移动至 Processed/Repeated_Papers 文件夹。")
-            except Exception as e:
-                print(f"   ⚠️ 移动重复文件失败：{e}，请注意检查 Input 路径！\n  即将开始分析下一篇...")
-            
-            print("-" * 40)
-            i_paper += 1
-            continue #直接跳过，进入下一个循环
-        else:
-            print("   ✅ 未发现重复，开始分析...")         
-
-        # 调用大模型并获取返回的 JSON
-        result_json = get_paper_analysis(MASTER_PROMPT, pdf_path, client)
-
-        if result_json and result_json != "NAP" and result_json != "FW":
-            # 根据获取到的中文短标题，设置输出 PDF 路径
-            pdf_path_processed = rename_pdf(result_json, PROCESSED_FOLDER)
-            
-            # 获取期刊等级
-            journal_name = result_json.get("properties", {}).get("Journal", "")
-            journal_ranks, indicators = get_journal_ranks(journal_name)
-
-            # 优先保存一份到本地 Obsidian 文件夹
-            success1 = save_to_obsidian(result_json, pdf_path_processed, journal_ranks, indicators, literature_type)
-            
-            # 提取Bibtex并追加到本地引用文件中
-            success2 = save_bibtex(result_json, pdf_path_processed, bib_filename_with_timestamp)
-
-            # 推送到 Notion
-            success3 = push_to_notion(result_json, pdf_path_processed, journal_ranks, indicators, literature_type)
-
-            # 如果前面几步都成功完成，移动文件并保存哈希值
-            if success1 and success2 and success3:
-                move_pdf(pdf_path, pdf_path_processed)
-                record_hash(file_hash, HASH_DB_FILE)
-            else:
-                steps = [
-                    (success1, "保存到 Obsidian 失败"),
-                    (success2, "保存 Bibtex 失败"),
-                    (success3, "推送 Notion 失败"),
-                ]
-                failed = [step[1] for step in steps if not step[0]]
-                print(f"   ❌ 未移动文件，原因：{', '.join(failed)}。\n   ⚠️ 注意检查其他环节的生成结果！必要时将其删除！")
-        elif result_json == "NAP":
-            print("   ⚠️经过LLM分析，该PDF文件内容并非学术论文！将跳过并分析下一篇！")
-        elif result_json == "FW":
-            print("   ⚠️LLM无法打开或无法读取该PDF文件！将跳过并分析下一篇！")
-
-        if not i_paper == len(pdf_files):
-            i_paper += 1   
-            print("☕ 为避免触发免费额度限制，休眠 70 秒...")
-            time.sleep(70)
-            print("-" * 40)
-        else:
-            print("-" * 40)
+    current_time = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+    log_filepath = os.path.join(log_dir, f"RunLog_{current_time}.md")
     
-    print("🎉 全部任务执行完毕！")
-    print("=" * 40)
+    logger = DualLogger(log_filepath)
+    sys.stdout = logger
+    sys.stderr = logger # 将报错信息 (如网络中断、路径为空等红色报错) 一并抓取进日志！
+
+    try:
+        # 获取用户输入的文献类型
+        literature_type = get_user_input()
+    
+        # 读取对应的路径，使用对应的key启动客户端，赋值对应的Prompt
+        if literature_type == "Empirical":
+            INPUT_FOLDER = INPUT_FOLDER_EMP
+            PROCESSED_FOLDER = PROCESSED_FOLDER_EMP
+            HASH_DB_FILE = HASH_DB_FILE_EMP
+            # 初始化客户端
+            client = genai.Client(api_key=GEMINI_API_KEY_EMP)
+            MASTER_PROMPT = PROMPT_EMP
+            # 总的 bibtex 文件名，加上时间戳
+            bib_filename_with_timestamp = rf"{datetime.datetime.now().strftime('%Y%m%d_%H%M')}_Master_Bib.bib"
+        elif literature_type == "Review":
+            INPUT_FOLDER = INPUT_FOLDER_REV
+            PROCESSED_FOLDER = PROCESSED_FOLDER_REV
+            HASH_DB_FILE = HASH_DB_FILE_REV
+            # 初始化客户端
+            client = genai.Client(api_key=GEMINI_API_KEY_REV)
+            MASTER_PROMPT = PROMPT_REV
+            # 总的 bibtex 文件名，加上时间戳
+            bib_filename_with_timestamp = rf"Review_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}_Master_Bib.bib"
+    
+        # 确保路径存在
+        if not os.path.exists(INPUT_FOLDER): os.makedirs(INPUT_FOLDER)
+        if not os.path.exists(PROCESSED_FOLDER): os.makedirs(PROCESSED_FOLDER)
+        if not os.path.exists(OBSIDIAN_FOLDER): os.makedirs(OBSIDIAN_FOLDER)
+        if not os.path.exists(BIBTEX_FOLDER): os.makedirs(BIBTEX_FOLDER)
+    
+        # 循环显示篇数的迭代值
+        i_paper = 1
+    
+        # 读取 Input 目录下的 PDF 文件列表
+        pdf_files = [f for f in os.listdir(INPUT_FOLDER) if f.lower().endswith('.pdf')]
+        print("=" * 40)
+        if not pdf_files:
+            print("📭 Input 文件夹中没有找到 PDF 文件。")
+            return
+        print(f"🎯 找到 {len(pdf_files)} 篇待处理文献。开始运行自动化流程...")
+        print("-" * 40)
+    
+        # 开始循环
+        for pdf_file in pdf_files:
+            # 获取并设定当前篇的原路径和输出路径
+            pdf_path = os.path.join(INPUT_FOLDER, pdf_file)
+            
+            # 检查是否重复
+            print(f"0️⃣ 已获取第 {i_paper} 篇PDF文件: {os.path.basename(pdf_path)}！\n   正在用 MD5 哈希值检测该论文是否重复...")
+            file_hash = get_file_md5(pdf_path)
+            if is_duplicate(file_hash, HASH_DB_FILE):
+                print(f"   ⏩ 该论文已重复，将被跳过！")
+                # 移动到重复文件夹内
+                try:
+                    shutil.move(pdf_path, os.path.join(f"{PROCESSED_FOLDER}/Repeated", pdf_file))
+                    print(f"   ✅ 已将重复文件移动至 Processed/Repeated_Papers 文件夹。")
+                except Exception as e:
+                    print(f"   ⚠️ 移动重复文件失败：{e}，请注意检查 Input 路径！\n  即将开始分析下一篇...")
+                
+                print("-" * 40)
+                i_paper += 1
+                continue #直接跳过，进入下一个循环
+            else:
+                print("   ✅ 未发现重复，开始分析...")         
+    
+            # 调用大模型并获取返回的 JSON
+            result_json = get_paper_analysis(MASTER_PROMPT, pdf_path, client)
+    
+            if result_json and result_json != "NAP" and result_json != "FW":
+                # 根据获取到的中文短标题，设置输出 PDF 路径
+                pdf_path_processed = rename_pdf(result_json, PROCESSED_FOLDER)
+                
+                # 获取期刊等级
+                journal_name = result_json.get("properties", {}).get("Journal", "")
+                journal_ranks, indicators = get_journal_ranks(journal_name)
+    
+                # 优先保存一份到本地 Obsidian 文件夹
+                success1 = save_to_obsidian(result_json, pdf_path_processed, journal_ranks, indicators, literature_type)
+                
+                # 提取Bibtex并追加到本地引用文件中
+                success2 = save_bibtex(result_json, pdf_path_processed, bib_filename_with_timestamp)
+    
+                # 推送到 Notion
+                # success3 = push_to_notion(result_json, pdf_path_processed, journal_ranks, indicators, literature_type)
+    
+                # 如果前面几步都成功完成，移动文件并保存哈希值
+                if success1 and success2:
+                    move_pdf(pdf_path, pdf_path_processed)
+                    record_hash(file_hash, HASH_DB_FILE)
+                else:
+                    steps = [
+                        (success1, "保存到 Obsidian 失败"),
+                        (success2, "保存 Bibtex 失败"),
+                        # (success3, "推送 Notion 失败"),
+                    ]
+                    failed = [step[1] for step in steps if not step[0]]
+                    print(f"   ❌ 未移动文件，原因：{', '.join(failed)}。\n   ⚠️ 注意检查其他环节的生成结果！必要时将其删除！")
+            elif result_json == "NAP":
+                print("   ⚠️经过LLM分析，该PDF文件内容并非学术论文！将跳过并分析下一篇！")
+            elif result_json == "FW":
+                print("   ⚠️LLM无法打开或无法读取该PDF文件！将跳过并分析下一篇！")
+    
+            if not i_paper == len(pdf_files):
+                i_paper += 1   
+                print("☕ 为避免触发免费额度限制，休眠 8 秒...")
+                time.sleep(8)
+                print("-" * 40)
+            else:
+                print("-" * 40)
+        
+        print("🎉 全部任务执行完毕！")
+        print("=" * 40)        
+        
+    finally:
+        # 确保无论程序是正常结束还是中途崩溃，都能完美闭合 Markdown 的代码块
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+        logger.close()
 
     #region 以下是调试代码，实际使用时保持注释状态即可
     
